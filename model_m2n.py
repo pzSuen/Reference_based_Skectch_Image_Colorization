@@ -6,13 +6,13 @@ from block import ResBlock
 
 
 class Discriminator(nn.Module):
-    """Discriminator network with PatchGAN.
+    """Discriminator network of PatchGAN.
     W = (W - F + 2P) /S + 1"""
 
     def __init__(self, spec_norm=True, LR=0.2):
         super(Discriminator, self).__init__()
         self.main = list()
-        self.main.append(ConvBlock(4, 16, spec_norm, stride=2, LR=LR))  # 256 -> 128
+        self.main.append(ConvBlock(8, 16, spec_norm, stride=2, LR=LR))  # 256 -> 128
         self.main.append(ConvBlock(16, 32, spec_norm, stride=2, LR=LR))  # 128 -> 64
         self.main.append(ConvBlock(32, 64, spec_norm, stride=2, LR=LR))  # 64 -> 32
         self.main.append(ConvBlock(64, 128, spec_norm, stride=2, LR=LR))  # 32 -> 16
@@ -25,6 +25,7 @@ class Discriminator(nn.Module):
 
 """
 class ResBlockNet(nn.Module):
+
     def __init__(self, in_channels, out_channels):
         super(ResBlockNet, self).__init__()
         self.main = list()
@@ -41,12 +42,14 @@ class ResBlockNet(nn.Module):
         self.main.append(nn.BatchNorm2d(out_channels, affine=True, track_running_stats=True))
         self.main.append(nn.ReLU(inplace=True))
         self.main = nn.Sequential(*self.main)
+
     def forward(self, x):
         return self.main(x) + x
 """
 
 
 class ResBlockNet(nn.Module):
+    """ Resblocks of Reference based sketch image colorization """
 
     def __init__(self, in_channels, out_channels):
         super(ResBlockNet, self).__init__()
@@ -62,11 +65,14 @@ class ResBlockNet(nn.Module):
 
 
 class Encoder(nn.Module):
-    """Discriminator network with PatchGAN.
-    W = (W - F + 2P) /S + 1"""
+    """
+    Encoder of Reference based sketch image colorization
+    W = (W - F + 2P) /S + 1
+    """
 
     def __init__(self, in_channels=3, spec_norm=False, LR=0.2):
         super(Encoder, self).__init__()
+
         self.layer1 = ConvBlock(in_channels, 16, spec_norm, LR=LR)  # 256
         self.layer2 = ConvBlock(16, 16, spec_norm, LR=LR)  # 256
         self.layer3 = ConvBlock(16, 32, spec_norm, stride=2, LR=LR)  # 128
@@ -143,7 +149,8 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    """Discriminator network with PatchGAN.
+    """
+    Decoder of Reference based sketch image colorization
     W = (W - F + 2P) /S + 1"""
 
     def __init__(self, spec_norm=False, LR=0.2):
@@ -197,67 +204,69 @@ class Decoder(nn.Module):
         return self.tanh(feature_map0)
 
 
-class SCFT_Moudle(nn.Module):
-    """Discriminator network with PatchGAN.
-    W = (W - F + 2P) /S + 1"""
+class SCFT_Module(nn.Module):
+    """
+    SCFT Module network with PatchGAN.
+    W = (W - F + 2P) /S + 1
+    """
 
     def __init__(self):
-        super(SCFT_Moudle, self).__init__()
+        super(SCFT_Module, self).__init__()
         self.w_q = nn.Linear(992, 992)
         self.w_k = nn.Linear(992, 992)
         self.w_v = nn.Linear(992, 992)
         self.scailing_factor = math.sqrt(992)
         self.softmax = nn.Softmax(dim=2)
 
-    def forward(self, v_s, v_r):
+    def forward(self, v_q, v_k, v_v):
         # print('v_s.size() : ', v_s.size()) # v_s.size() :  torch.Size([2, 256, 992])
         # print('v_r.size() : ', v_r.size()) # v_r.size() :  torch.Size([2, 256, 992])
-        q_result = self.w_q(v_s)
-        k_result = self.w_k(v_r)
-        v_result = self.w_v(v_r)
+        # print(v_q.shape)
+        q_result = self.w_q(v_q)  # torch.Size([2, 256, 992])
+        k_result = self.w_k(v_k)  # torch.Size([2, 256, 992])
+        v_result = self.w_v(v_v)  # torch.Size([2, 256, 992])
+
+        attention_map = torch.bmm(k_result, v_result.permute(0, 2, 1))  # torch.Size([2, 256,256])
 
         # print('q_result : ', q_result.size()) # q_result :  torch.Size([2, 256, 992])
         # print('k_result : ', k_result.size()) # k_result :  torch.Size([2, 256, 992])
-        k_result = k_result.permute(0, 2, 1)
+        # k_result = k_result.permute(0, 2, 1)
         # print('k_result : ', k_result.size()) # k_result :  torch.Size([2, 992, 256])
-        attention_map = torch.bmm(q_result, k_result)
+        # attention_map = torch.bmm(q_result, k_result)
         # print('attention_map : ', attention_map.size()) # attention_map :  torch.Size([2, 256, 256])
-        attention_map = self.softmax(attention_map) / self.scailing_factor
-        v_star = torch.bmm(attention_map, v_result)
+        # attention_map = self.softmax(attention_map) / self.scailing_factor
+        refection_map = torch.bmm(attention_map, v_result)  # torch.Size([2, 256,992])
         # print('v_star.size() : ', v_star.size()) # v_star.size() :  torch.Size([2, 256, 992])
-        """
-        *debug example
-        soft_max = nn.Softmax(dim=2)
-        t = torch.randn((2,5,5))
-        softed_t = soft_max(t)
-        print(softed_t)
-        print(torch.sum(softed_t[0, 0]))
-        """
-        v_sum = (v_s + v_star).permute(0, 2, 1)
+
+        v_sum = (refection_map + v_result).permute(0, 2, 1)  # torch.Size([2,992, 256])
         # print('v_sum.size() : ', v_sum.size()) # v_sum.size() :  torch.Size([2, 992, 256])
         b, ch, hw = v_sum.size()
-        v_sum = v_sum.reshape((b, ch, 16, 16))
+        v_sum = v_sum.reshape((b, ch, 16, 16))  # torch.Size([2, 992, 16, 16])
         # print('v_sum.size() : ', v_sum.size())  # v_sum.size() :  torch.Size([2, 992, 16, 16])
-        return v_sum, [q_result, k_result, v_result]
+        return v_sum, [q_result.permute(0, 2, 1), k_result.permute(0, 2, 1), v_result.permute(0, 2, 1)]
 
 
 class Generator(nn.Module):
-    """Discriminator network with PatchGAN.
-    W = (W - F + 2P) /S + 1"""
+    """
+    Generator of Reference based sketch image colorization
+    W = (W - F + 2P) /S + 1
+    """
 
     def __init__(self, spec_norm=False, LR=0.2):
         super(Generator, self).__init__()
-        self.encoder_reference = Encoder(in_channels=3, spec_norm=spec_norm, LR=LR)
-        self.encoder_sketch = Encoder(in_channels=1, spec_norm=spec_norm, LR=LR)
+        self.encoder_image = Encoder(in_channels=3, spec_norm=spec_norm, LR=LR)
+        self.encoder_mask = Encoder(in_channels=5, spec_norm=spec_norm, LR=LR)
         self.decoder = Decoder()
-        self.scft_module = SCFT_Moudle()
+        self.scft_module = SCFT_Module()
         self.res_model = ResBlockNet(992, 992)
 
-    def forward(self, reference, sketch):
-        v_r, _ = self.encoder_reference(reference)
-        v_s, feature_list = self.encoder_sketch(sketch)
-        v_c, q_k_v_list = self.scft_module(v_s, v_r)
-        rv_c = self.res_model(v_c)
-        concat = torch.cat([rv_c, v_c], dim=1)
-        image = self.decoder(concat, feature_list)
+    def forward(self, source_image, source_mask, target_mask):
+        value, feature_list_value = self.encoder_image(source_image)
+        key, feature_list_key = self.encoder_mask(source_mask)
+        query, feature_list_query = self.encoder_mask(target_mask)
+        reflection_map, q_k_v_list = self.scft_module(query, key, value)
+        rv_c = self.res_model(reflection_map)
+        concat = torch.cat([rv_c, reflection_map], dim=1)
+        # print(concat.shape)
+        image = self.decoder(concat, feature_list_query)
         return image, q_k_v_list

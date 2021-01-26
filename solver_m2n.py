@@ -7,11 +7,12 @@ import glob
 import os.path as osp
 import neptune
 
-from model import Generator
-from model import Discriminator
+from model_m2n import Generator
+from model_m2n import Discriminator
 from torchvision.models import vgg19
 from torchvision.utils import save_image
 from torchsummary import summary
+from torch.optim import lr_scheduler
 
 vgg_activation = dict()
 
@@ -131,7 +132,7 @@ class Solver(object):
         print(name)
         print("The number of parameters: {}".format(num_params))
 
-        summary(model, input_size=(3, self.img_size, self.img_size), batch_size=-1)
+        # summary(model, input_size=(3, self.img_size, self.img_size), batch_size=-1)
 
         with open(os.path.join(self.train_dir, 'model_arch.txt'), 'a') as fp:
             print(name, file=fp)
@@ -223,22 +224,42 @@ class Solver(object):
         self.D.to(self.gpu)
         return epoch
 
-    def image_reporting(self, fixed_sketch, fixed_reference, fixed_elastic_reference, epoch, postfix=''):
+    def postprocess_label(self, onehot_content):
+        b, c, w, h = onehot_content.shape
+        res = list()
+        for j in range(b):
+            result = torch.zeros(size=(1, 1, w, h)).to(self.gpu)
+
+            for i in range(c):
+                result += onehot_content[j, i, :, :] * i
+            result.unsqueeze(0).unsqueeze(0)
+
+            res.append(result)
+        res_cat = torch.cat(res, dim=0)
+        # print(res_cat.shape)
+        return res_cat
+
+    def image_reporting(self, source_image, source_mask, target_mask, epoch, postfix=''):
         """ save target/reference/generate images in one picture"""
         image_report = list()
-        image_report.append(fixed_sketch.expand_as(fixed_reference))  # target sketch
-        image_report.append(fixed_elastic_reference)  # distortion reference image
-        image_report.append(fixed_reference)  # original reference image
-        fake_result, _ = self.G(fixed_elastic_reference, fixed_sketch)  # generate image
-        image_report.append(fake_result)
+        # print(source_image.shape, source_mask.shape, target_mask.shape)
+        image_report.append(self.denorm(source_image))  # distortion reference image
+        image_report.append(self.postprocess_label(source_mask).expand_as(source_image))  # original reference image
+        image_report.append(self.postprocess_label(target_mask).expand_as(source_image))  # target sketch
+        fake_result, _ = self.G(source_image, source_mask, target_mask)  # generate image
+        image_report.append(self.denorm(fake_result))
         x_concat = torch.cat(image_report, dim=3)
         sample_path = os.path.join(self.sample_dir, '{}-images{}.jpg'.format(epoch, postfix))
-        save_image(self.denorm(x_concat.data.cpu()), sample_path, nrow=1, padding=0)
+        save_image(x_concat.data.cpu(), sample_path, nrow=1, padding=0)
 
     def train(self):
         """ training process """
         neptune_api = 'eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiMjRiMzg5ZDEtMGEzNy00ZTUwLThhOTktYTVkNGIzMzVkYjBmIn0='
-        neptune.init(project_qualified_name='pz.suen/sandbox', api_token=neptune_api)
+        # neptune.init(project_qualified_name='pz.suen/m2n', api_token=neptune_api)
+        # neptune.init(backend=neptune.OfflineBackend())
+        neptune.init(project_qualified_name='shared/onboarding',
+                     api_token='ANONYMOUS',
+                     )
         PARAMs = {'gan_loss': self.gan_loss}
         neptune.create_experiment(params=PARAMs, upload_source_files=['config.yaml'])
 
@@ -249,20 +270,22 @@ class Solver(object):
 
         # Fetch fixed inputs for debugging.
         data_iter = iter(data_loader)
-        _, fixed_elastic_reference, fixed_reference, fixed_sketch = next(data_iter)
+        _, is_easy, source_mask, target_mask, source_image = next(data_iter)
 
+        # self.transform_mask(augmented_mask), self.transform_mask(mask), \
+        # self.transform_img(image)
         # 目的是使 sketch 在batch维度上有一个偏移量
         # 与 torch.cat 相反，将 tensor 按照 dim 分为 chunks 个块
-        splited_fixed_sketch = list(torch.chunk(input=fixed_sketch, chunks=self.batch_size, dim=0))
-        first_fixed_sketch = splited_fixed_sketch[0]  # 取batch中的第一个
-        del splited_fixed_sketch[0]
-        splited_fixed_sketch.append(first_fixed_sketch)
-        shifted_fixed_sketch = torch.cat(splited_fixed_sketch, dim=0)
-
-        fixed_sketch = fixed_sketch.to(self.gpu)
-        fixed_reference = fixed_reference.to(self.gpu)
-        fixed_elastic_reference = fixed_elastic_reference.to(self.gpu)
-        shifted_fixed_sketch = shifted_fixed_sketch.to(self.gpu)
+        # splited_fixed_sketch = list(torch.chunk(input=fixed_sketch, chunks=self.batch_size, dim=0))
+        # first_fixed_sketch = splited_fixed_sketch[0]  # 取batch中的第一个
+        # del splited_fixed_sketch[0]
+        # splited_fixed_sketch.append(first_fixed_sketch)
+        # shifted_fixed_sketch = torch.cat(splited_fixed_sketch, dim=0)
+        #
+        # fixed_sketch = fixed_sketch.to(self.gpu)
+        # fixed_reference = fixed_reference.to(self.gpu)
+        # fixed_elastic_reference = fixed_elastic_reference.to(self.gpu)
+        # shifted_fixed_sketch = shifted_fixed_sketch.to(self.gpu)
 
         # Learning rate cache for decaying.
         g_lr = self.g_lr
@@ -275,35 +298,41 @@ class Solver(object):
         for e in range(start_epoch, self.epoch):
             for i in range(iterations):
                 try:
-                    _, elastic_reference, reference, sketch = next(data_iter)
+                    _, is_easy, source_mask, target_mask, source_image = next(data_iter)
                 except:
                     data_iter = iter(data_loader)
-                    _, elastic_reference, reference, sketch = next(data_iter)
+                    _, is_easy, source_mask, target_mask, source_image = next(data_iter)
 
-                elastic_reference = elastic_reference.to(self.gpu)
-                reference = reference.to(self.gpu)
-                sketch = sketch.to(self.gpu)
+                source_image = source_image.to(self.gpu)
+                source_mask = source_mask.to(self.gpu)
+                target_mask = target_mask.to(self.gpu)
 
                 loss_dict = dict()
                 # update discriminator
                 if (i + 1) % self.d_critic == 0:
 
-                    fake_images, _ = self.G(elastic_reference, sketch)
+                    fake_images, _ = self.G(source_image, source_mask, target_mask)
+
+                    print(source_image.shape)
+                    print(source_mask.shape)
+                    print(target_mask.shape)
+                    print(fake_images.shape)
+
                     d_loss = None
 
                     if self.gan_loss in ['lsgan', 'vanilla']:
-                        real_score = self.D(torch.cat([reference, sketch], dim=1))
-                        fake_score = self.D(torch.cat([fake_images.detach(), sketch], dim=1))
+                        real_score = self.D(torch.cat([source_image, source_mask], dim=1))
+                        fake_score = self.D(torch.cat([fake_images.detach(), target_mask], dim=1))
                         d_loss_real = self.adversarial_loss(real_score, torch.ones_like(real_score))
                         d_loss_fake = self.adversarial_loss(fake_score, torch.zeros_like(fake_score))
                         d_loss = self.lambda_d_real * d_loss_real + self.lambda_d_fake * d_loss_fake
                     elif self.gan_loss == 'wgan':
-                        real_score = self.D(torch.cat([reference, sketch], dim=1))
-                        fake_score = self.D(torch.cat([fake_images.detach(), sketch], dim=1))
+                        real_score = self.D(torch.cat([source_image, source_mask], dim=1))
+                        fake_score = self.D(torch.cat([fake_images.detach(), target_mask], dim=1))
                         d_loss_real = -torch.mean(real_score)
                         d_loss_fake = torch.mean(fake_score)
-                        alpha = torch.rand(reference.size(0), 1, 1, 1).to(self.gpu)
-                        x_hat = (alpha * reference.data + (1 - alpha) * fake_images.data).requires_grad_(True)
+                        alpha = torch.rand(source_image.size(0), 1, 1, 1).to(self.gpu)
+                        x_hat = (alpha * source_image.data + (1 - alpha) * fake_images.data).requires_grad_(True)
                         out_src = self.D(x_hat)
                         d_loss_gp = self.gradient_penalty(out_src, x_hat)
                         d_loss = self.lambda_d_real * d_loss_real + self.lambda_d_fake * d_loss_fake + self.lambda_d_gp * d_loss_gp
@@ -327,20 +356,27 @@ class Solver(object):
 
                 # update generator
                 if (i + 1) % self.g_critic == 0:
-                    fake_images, q_k_v_list = self.G(elastic_reference, sketch)
-                    fake_score = self.D(torch.cat([fake_images, sketch], dim=1))
+                    fake_images, q_k_v_list = self.G(source_image, source_mask, target_mask)
+                    fake_score = self.D(torch.cat([fake_images, target_mask], dim=1))
                     if self.gan_loss in ['lsgan', 'vanilla']:
                         g_loss_fake = self.adversarial_loss(fake_score, torch.ones_like(fake_score))
                     elif self.gan_loss == 'wgan':
                         g_loss_fake = - torch.mean(fake_score)
                     else:
                         pass
-                    g_loss_recon = self.l1_loss(fake_images, reference)
+
+                    if is_easy and target_mask.equal(source_mask):
+                        # print("^&" * 20)
+                        g_loss_recon = self.l1_loss(fake_images, source_image)
+                        # print("This is same")
+                    else:
+                        # print("This is different")
+                        pass
 
                     fake_activation = dict()
                     real_activation = dict()
 
-                    self.vgg(reference)
+                    self.vgg(source_image)
                     for layer in self.target_layer:
                         fake_activation[layer] = vgg_activation[layer]
                     vgg_activation.clear()
@@ -366,14 +402,16 @@ class Solver(object):
                         g_loss_triple = self.triplet_loss(anchor=anchor, positive=positive, negative=negative)
 
                     g_loss = self.lambda_g_fake * g_loss_fake + \
-                             self.lambda_g_recon * g_loss_recon + \
                              self.lambda_g_percep * g_loss_percep + \
                              self.lambda_g_style * g_loss_style
 
                     neptune.log_metric('g_loss_fake', g_loss_fake)
-                    neptune.log_metric('g_loss_recon', g_loss_recon)
                     neptune.log_metric('g_loss_percep', g_loss_percep)
                     neptune.log_metric('g_loss_style', g_loss_style)
+
+                    if is_easy and target_mask.equal(source_mask):
+                        g_loss += self.lambda_g_recon * g_loss_recon
+                        neptune.log_metric('g_loss_recon', g_loss_recon)
 
                     if self.triplet:
                         g_loss += 1 * g_loss_triple
@@ -387,9 +425,11 @@ class Solver(object):
 
                     # Logging.
                     loss_dict['G/loss_fake'] = self.lambda_g_fake * g_loss_fake.item()
-                    loss_dict['G/loss_recon'] = self.lambda_g_recon * g_loss_recon.item()
                     loss_dict['G/loss_style'] = self.lambda_g_style * g_loss_style.item()
                     loss_dict['G/loss_percep'] = self.lambda_g_percep * g_loss_percep.item()
+
+                    if is_easy and target_mask.equal(source_mask):
+                        loss_dict['G/loss_recon'] = self.lambda_g_recon * g_loss_recon.item()
 
                     if self.triplet:
                         loss_dict['G/loss_triple'] = g_loss_triple.item()
@@ -405,10 +445,14 @@ class Solver(object):
 
             if (e + 1) % self.sample_step == 0:
                 with torch.no_grad():
-                    self.image_reporting(fixed_sketch, fixed_reference, fixed_elastic_reference, e + 1, postfix='')
-                    self.image_reporting(shifted_fixed_sketch, fixed_reference, fixed_elastic_reference, e + 1,
-                                         postfix='_shifted')
+                    self.image_reporting(source_image, source_mask, target_mask, e + 1, postfix='')
+                    # self.image_reporting(source_image, source_mask, target_mask, e + 1,
+                    #                      postfix='_shifted')
+
                     print('Saved real and fake images into {}...'.format(self.sample_dir))
+
+            if (e + 1) % self.lr_decay_step == 0:
+                pass
 
             # Save model checkpoints.
             if (e + 1) % self.save_step == 0 and (e + 1) >= self.save_start:

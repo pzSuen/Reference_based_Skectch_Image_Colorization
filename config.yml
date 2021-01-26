@@ -1,11 +1,10 @@
-
 MODEL_CONFIG:
   IMG_SIZE: 256
 
 TRAINING_CONFIG:
 
   EPOCH: 100
-  BATCH_SIZE: 8
+  BATCH_SIZE: 12
 
   # lr and lambda
   G_LR : 10e-4
@@ -17,7 +16,7 @@ TRAINING_CONFIG:
   LAMBDA_G_PERCEP : 0.01
   LAMBDA_D_FAKE  : 1
   LAMBDA_D_REAL  : 1
-  LAMBDA_GP : 20000
+  LAMBDA_GP : 20000 # todo:什么含义
 
   # Data augmentation
   AUGMENT : 'tps' # or 'tps, elastic
@@ -59,7 +58,7 @@ TRAINING_CONFIG:
   MODEL_DIR : 'models'
 
   # GPU
-  GPU: 1
+  GPU: 0
 
   # Step Size
 

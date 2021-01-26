@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" autoUpload="Always" serverName="pzsuen@Server" remoteFilesAllowedToDisappearOnAutoupload="false">
+    <serverData>
+      <paths name="pzsuen@Server">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/Code/Reference_based_Skectch_Image_Colorization" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+    </serverData>
+    <option name="myAutoUpload" value="ALWAYS" />
+  </component>
+</project>

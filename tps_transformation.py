@@ -4,10 +4,10 @@ import cv2
 import random
 import math
 
+
 # Reference : https://github.com/cheind/py-thin-plate-spline
 
 def tps_transform(img, dshape=None):
-
     while True:
         point1 = round(random.uniform(0.3, 0.7), 2)
         point2 = round(random.uniform(0.3, 0.7), 2)
@@ -41,4 +41,3 @@ def tps_transform(img, dshape=None):
     grid = tps.tps_grid(theta, c_dst, dshape)
     mapx, mapy = tps.tps_grid_to_remap(grid, img.shape)
     return cv2.remap(img, mapx, mapy, cv2.INTER_CUBIC)
-

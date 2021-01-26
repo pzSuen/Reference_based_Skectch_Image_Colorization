@@ -1,14 +1,16 @@
-from PIL import Image,  ImageEnhance
+from PIL import Image, ImageEnhance
 from pylab import *
 from scipy.ndimage import filters
 import numpy as np
 from scipy.ndimage.interpolation import map_coordinates
 from scipy.ndimage.filters import gaussian_filter
 
+
 # Python tps https://github.com/cheind/py-thin-plate-spline/blob/master/thinplate/pytorch.py
-# Reference : https://hobbydev.tistory.com/56
+# Reference : https://blog.csdn.net/qq_27879381/article/details/72718135
 # https://github.com/WarBean/tps_stn_pytorch tps stn pytorch
 
+# XDoG:一种快速简洁的图像边缘提取器
 def get_outline_image(img_path):
     gamma = 0.97
     phi = 200
@@ -31,6 +33,7 @@ def get_outline_image(img_path):
     gray_pic = differencedIm2.astype(np.uint8)
     final_img = Image.fromarray(gray_pic)
     return final_img
+
 
 # https://gist.github.com/erniejunior/601cdf56d2b424757de5
 def elastic_transform(image, alpha, sigma, random_state=None):

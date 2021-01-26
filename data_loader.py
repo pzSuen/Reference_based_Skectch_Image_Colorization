@@ -10,6 +10,7 @@ from PIL import Image
 from utils import elastic_transform
 
 
+
 class DataSet(data.Dataset):
 
     def __init__(self, config, img_transform_gt, img_transform_sketch):
@@ -21,7 +22,7 @@ class DataSet(data.Dataset):
         self.data_list = glob.glob(os.path.join(self.img_dir, '*.png'))
         self.data_list = [x.split(os.sep)[-1].split('_')[0] for x in self.data_list]
         self.data_list = list(set(self.data_list))
-        #random.seed(config['TRAINING_CONFIG']['CPU_SEED'])
+        # random.seed(config['TRAINING_CONFIG']['CPU_SEED'])
 
         self.augment = config['TRAINING_CONFIG']['AUGMENT']
 
@@ -55,15 +56,17 @@ class DataSet(data.Dataset):
         else:
             augmented_reference = reference
 
-        return fid, self.img_transform_gt(augmented_reference), self.img_transform_gt(reference), self.img_transform_sketch(sketch)
+        return fid, self.img_transform_gt(augmented_reference), self.img_transform_gt(
+            reference), self.img_transform_sketch(sketch)
 
     def __len__(self):
         """Return the number of images."""
         return len(self.data_list)
 
 
-def get_loader(config):
 
+
+def get_loader(config):
     img_transform_gt = list()
     img_transform_sketch = list()
     img_size = config['MODEL_CONFIG']['IMG_SIZE']
